@@ -1,39 +1,108 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import os
-from dotenv import load_dotenv
 import logging
 import json
+from datetime import datetime
 
-# Load environment variables first
-load_dotenv()
+# RADICAL FIX: Force environment loading FIRST
+from config.env_loader import env_loader
+env_loader.ensure_loaded()
 
 from config.settings import Config
 from services.github_service import GitHubService
 from services.bedrock_service import BedrockService
 from services.prompt_service import PromptService
 from services.config_service import ConfigService
+from services.prompt_constructor import PromptConstructor
+from services.logging_service import logging_service
+
+# Configure logging EARLY
+log_level = env_loader.get_env('LOG_LEVEL', 'INFO')
+logging.basicConfig(
+    level=getattr(logging, log_level),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# FORCE LOG ENVIRONMENT STATUS AT STARTUP
+logger.info("🚀 STARTING VIBE ASSISTANT")
+env_loader.log_environment_status()
 
 # Initialize Flask app
 app = Flask(__name__)
 app.config.from_object(Config)
 CORS(app)
 
-# Initialize services
-config_service = ConfigService()
-github_service = GitHubService()
-bedrock_service = BedrockService()
-prompt_service = PromptService(bedrock_service)
+# RADICAL FIX: Initialize services with explicit environment checking
+logger.info("🔧 Initializing services...")
 
-# Configure logging
-log_level = os.environ.get('LOG_LEVEL', 'INFO')
-logging.basicConfig(level=getattr(logging, log_level))
-logger = logging.getLogger(__name__)
+try:
+    config_service = ConfigService()
+    logger.info("✅ ConfigService initialized")
+except Exception as e:
+    logger.error(f"❌ ConfigService failed: {e}")
+    raise
+
+try:
+    github_service = GitHubService()
+    logger.info("✅ GitHubService initialized")
+except Exception as e:
+    logger.error(f"❌ GitHubService failed: {e}")
+    raise
+
+try:
+    bedrock_service = BedrockService()
+    logger.info("✅ BedrockService initialized")
+except Exception as e:
+    logger.error(f"❌ BedrockService failed: {e}")
+    raise
+
+try:
+    prompt_service = PromptService(bedrock_service)
+    logger.info("✅ PromptService initialized")
+except Exception as e:
+    logger.error(f"❌ PromptService failed: {e}")
+    raise
+
+try:
+    prompt_constructor = PromptConstructor(bedrock_service, config_service)
+    logger.info("✅ PromptConstructor initialized")
+except Exception as e:
+    logger.error(f"❌ PromptConstructor failed: {e}")
+    raise
+
+# FORCE CHECK CONFIGURATION AT STARTUP
+try:
+    startup_config = config_service.get_config()
+    logger.info("🔍 STARTUP CONFIGURATION CHECK:")
+    logger.info(f"GitHub repo: {startup_config.get('github', {}).get('default_repo', 'NOT SET')}")
+    logger.info(f"AWS region: {startup_config.get('aws', {}).get('region', 'NOT SET')}")
+    logger.info(f"AWS key set: {bool(startup_config.get('aws', {}).get('access_key_id'))}")
+    logger.info(f"GitHub token set: {bool(startup_config.get('github', {}).get('token'))}")
+except Exception as e:
+    logger.error(f"❌ Startup configuration check failed: {e}")
+
+logger.info("🎯 All services initialized successfully!")
+
+@app.before_request
+def before_request():
+    """Ensure environment is loaded before each request"""
+    env_loader.ensure_loaded()
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
-    return jsonify({"status": "healthy", "service": "vibe-assistant"})
+    """Health check endpoint with environment status"""
+    env_status = {
+        'aws_configured': bool(env_loader.get_env('AWS_ACCESS_KEY_ID')),
+        'github_configured': bool(env_loader.get_env('GITHUB_TOKEN')),
+        'github_repo_set': bool(env_loader.get_env('GITHUB_DEFAULT_REPO'))
+    }
+    return jsonify({
+        "status": "healthy", 
+        "service": "vibe-assistant",
+        "environment": env_status
+    })
 
 @app.route('/api/config', methods=['GET', 'POST'])
 def handle_config():
@@ -95,7 +164,6 @@ def get_file_content():
 
 @app.route('/api/requirements', methods=['GET', 'POST'])
 def handle_requirements():
-    """Get or update non-functional requirements"""
     if request.method == 'GET':
         try:
             config = config_service.get_config()
@@ -107,330 +175,191 @@ def handle_requirements():
     
     elif request.method == 'POST':
         try:
-            data = request.json
+            data = request.get_json()
             task_type = data.get('task_type')
-            requirements = data.get('requirements')
+            requirements = data.get('requirements', [])
             
-            if not task_type or requirements is None:
-                return jsonify({"success": False, "error": "Task type and requirements are required"}), 400
+            if not task_type:
+                return jsonify({"success": False, "error": "Task type is required"}), 400
             
+            # Update requirements using config service
             updated_requirements = config_service.update_requirements(task_type, requirements)
+            
             return jsonify({"success": True, "requirements": updated_requirements})
         except Exception as e:
             logger.error(f"Error updating requirements: {str(e)}")
             return jsonify({"success": False, "error": str(e)}), 500
 
-@app.route('/api/bedrock/test', methods=['POST'])
-def test_bedrock_connection():
-    try:
-        data = request.get_json()
-        # Use provided credentials or fall back to environment variables
-        aws_access_key_id = data.get('aws_access_key_id') or os.environ.get('AWS_ACCESS_KEY_ID')
-        aws_secret_access_key = data.get('aws_secret_access_key') or os.environ.get('AWS_SECRET_ACCESS_KEY')
-        aws_region = data.get('aws_region') or os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
-        model_id = data.get('model_id') or os.environ.get('AWS_BEDROCK_MODEL_ID', 'anthropic.claude-sonnet-4-20250514-v1:0')
-
-        if not all([aws_access_key_id, aws_secret_access_key, model_id]):
-            return jsonify({
-                'connected': False,
-                'error': 'Missing required AWS credentials or model ID'
-            }), 400
-
-        # Test connection to Bedrock
-        import boto3
-        from botocore.exceptions import ClientError, NoCredentialsError
-
-        try:
-            # Create a Bedrock client
-            bedrock = boto3.client(
-                'bedrock-runtime',
-                aws_access_key_id=aws_access_key_id,
-                aws_secret_access_key=aws_secret_access_key,
-                region_name=aws_region
-            )
-
-            # Test with a simple request
-            response = bedrock.invoke_model(
-                modelId=model_id,
-                body=json.dumps({
-                    "anthropic_version": "bedrock-2023-05-31",
-                    "max_tokens": 10,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": "Hello"
-                        }
-                    ]
-                }),
-                contentType='application/json'
-            )
-
-            return jsonify({
-                'connected': True,
-                'message': 'Successfully connected to AWS Bedrock'
-            })
-
-        except ClientError as e:
-            error_code = e.response['Error']['Code']
-            if error_code == 'UnauthorizedOperation':
-                error_msg = 'Invalid AWS credentials'
-            elif error_code == 'ValidationException':
-                error_msg = 'Invalid model ID or request format'
-            else:
-                error_msg = f'AWS Error: {e.response["Error"]["Message"]}'
-            
-            return jsonify({
-                'connected': False,
-                'error': error_msg
-            }), 401
-
-        except NoCredentialsError:
-            return jsonify({
-                'connected': False,
-                'error': 'AWS credentials not found'
-            }), 401
-
-    except Exception as e:
-        logger.error(f"Bedrock connection test failed: {str(e)}")
-        return jsonify({
-            'connected': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/bedrock/chat', methods=['POST'])
-def chat_with_ai():
-    try:
-        data = request.get_json()
-        message = data.get('message', '')
-        current_prompt = data.get('current_prompt', '')
-        selected_files = data.get('selected_files', [])
-        config_data = data.get('config', {})
-
-        # Use provided credentials or fall back to environment variables
-        aws_access_key_id = config_data.get('aws_access_key_id') or os.environ.get('AWS_ACCESS_KEY_ID')
-        aws_secret_access_key = config_data.get('aws_secret_access_key') or os.environ.get('AWS_SECRET_ACCESS_KEY')
-        aws_region = config_data.get('aws_region') or os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
-        model_id = config_data.get('model_id') or os.environ.get('AWS_BEDROCK_MODEL_ID', 'anthropic.claude-sonnet-4-20250514-v1:0')
-
-        if not all([aws_access_key_id, aws_secret_access_key, model_id]):
-            return jsonify({
-                'error': 'Missing required AWS credentials or model ID'
-            }), 400
-
-        import boto3
-        from botocore.exceptions import ClientError
-
-        # Create Bedrock client
-        bedrock = boto3.client(
-            'bedrock-runtime',
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-            region_name=aws_region
-        )
-
-        # Build context from selected files
-        file_context = ""
-        if selected_files:
-            file_context = "\n\nSelected files context:\n"
-            for file in selected_files[:5]:  # Limit to 5 files to avoid token limits
-                file_context += f"- {file['path']} ({file['type']})\n"
-
-        # Build the system prompt
-        system_prompt = f"""You are an AI assistant helping with prompt engineering and code analysis.
-
-Current prompt being worked on:
-{current_prompt}
-
-{file_context}
-
-Please provide helpful, concise responses to assist with prompt improvement and code understanding."""
-
-        # Prepare the request
-        request_body = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 1000,
-            "system": system_prompt,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": message
-                }
-            ]
-        }
-
-        try:
-            response = bedrock.invoke_model(
-                modelId=model_id,
-                body=json.dumps(request_body),
-                contentType='application/json'
-            )
-
-            response_body = json.loads(response['body'].read())
-            ai_response = response_body.get('content', [{}])[0].get('text', 'No response generated')
-
-            return jsonify({
-                'response': ai_response,
-                'success': True
-            })
-
-        except ClientError as e:
-            return jsonify({
-                'error': f'AWS Bedrock error: {str(e)}',
-                'success': False
-            }), 500
-
-    except Exception as e:
-        logger.error(f"AI chat failed: {str(e)}")
-        return jsonify({
-            'error': str(e),
-            'success': False
-        }), 500
-
-# New prompt builder endpoints
-@app.route('/api/prompt/build', methods=['POST'])
-def build_prompt():
-    try:
-        data = request.get_json()
-        prompt = data.get('prompt', '')
-        task_type = data.get('task_type', 'development')
-        selected_files = data.get('selected_files', [])
-        include_context = data.get('include_context', True)
-        include_requirements = data.get('include_requirements', True)
-        
-        # Load non-functional requirements from user config instead of requirements.txt
-        requirements_list = []
-        if include_requirements:
-            try:
-                config = config_service.get_config()
-                nfr = config.get('non_functional_requirements', {})
-                requirements_list = nfr.get(task_type, [])
-            except Exception as e:
-                logger.warning(f"Could not load non-functional requirements: {str(e)}")
-        
-        # Build context from selected files
-        context_text = ""
-        if include_context and selected_files:
-            context_parts = []
-            max_file_size = int(os.environ.get('MAX_FILE_SIZE_KB', '100')) * 1024
-            
-            for file_info in selected_files:
-                try:
-                    file_path = file_info.get('path', '')
-                    if os.path.exists(file_path):
-                        file_size = os.path.getsize(file_path)
-                        if file_size <= max_file_size:
-                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                content = f.read()
-                                context_parts.append(f"File: {file_path}\n{content}\n")
-                except Exception:
-                    continue  # Skip files that can't be read
-            context_text = "\n".join(context_parts)
-        
-        # Build final prompt
-        final_prompt_parts = []
-        
-        # Add task type context
-        task_contexts = {
-            'development': 'You are a senior software developer. Focus on writing clean, maintainable, and efficient code.',
-            'refactoring': 'You are a code refactoring expert. Focus on improving code structure, readability, and performance.',
-            'testing': 'You are a testing specialist. Focus on comprehensive test coverage and quality assurance.',
-            'documentation': 'You are a technical writer. Focus on clear, comprehensive documentation.',
-            'review': 'You are a code reviewer. Focus on identifying issues, improvements, and best practices.'
-        }
-        
-        if task_type in task_contexts:
-            final_prompt_parts.append(task_contexts[task_type])
-        
-        # Add user prompt
-        final_prompt_parts.append(f"Task: {prompt}")
-        
-        # Add non-functional requirements if available
-        if requirements_list:
-            requirements_text = f"Non-functional requirements for {task_type}:\n"
-            requirements_text += "\n".join(f"- {req}" for req in requirements_list)
-            final_prompt_parts.append(requirements_text)
-        
-        # Add file context if available
-        if context_text:
-            final_prompt_parts.append(f"Context from selected files:\n{context_text}")
-        
-        final_prompt = "\n\n".join(final_prompt_parts)
-        
-        return jsonify({
-            'success': True,
-            'final_prompt': final_prompt,
-            'context_included': include_context and bool(context_text),
-            'requirements_included': include_requirements and bool(requirements_list),
-            'files_processed': len(selected_files) if include_context else 0,
-            'requirements_applied': len(requirements_list)
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 @app.route('/api/enhance-prompt', methods=['POST'])
 def enhance_prompt():
-    """Enhanced prompt optimization endpoint for vibe coding tool"""
+    """Enhanced prompt endpoint with real Bedrock integration"""
     try:
         data = request.get_json()
         
         if not data or 'prompt' not in data:
-            return jsonify({
-                'success': False,
-                'error': 'Prompt is required'
-            }), 400
+            return jsonify({'error': 'Prompt is required'}), 400
         
         user_prompt = data['prompt']
         task_type = data.get('task_type', 'development')
-        include_specification = data.get('include_specification', False)
+        selected_files = data.get('selected_files', [])
+        
+        logger.info(f"Processing enhance-prompt request: {user_prompt[:100]}...")
+        
+        # Log the API request
+        logging_service.log_api_request(
+            endpoint='/api/enhance-prompt',
+            request_data={
+                'prompt': user_prompt,
+                'task_type': task_type,
+                'selected_files_count': len(selected_files)
+            }
+        )
+        
+        # Get configuration and NFRs
+        config = config_service.get_config()
+        all_nfrs = config.get('non_functional_requirements', {}).get(task_type, [])
+        
+        # Initialize services
+        bedrock_service = BedrockService()
+        prompt_constructor = PromptConstructor(bedrock_service=bedrock_service, config_service=config_service)
+        
+        # Test Bedrock connection first
+        if not bedrock_service.test_connection():
+            error_msg = "Bedrock connection test failed"
+            logger.error(error_msg)
+            logging_service.log_error("bedrock_connection", error_msg)
+            return jsonify({'error': 'AI service temporarily unavailable'}), 503
+        
+        # Construct the enhanced prompt
+        constructed_prompt = prompt_constructor.construct_enhanced_prompt(
+            user_input=user_prompt,
+            nfr_requirements=all_nfrs,
+            task_type=task_type,
+            file_context=selected_files,
+            config=config
+        )
+        
+        # Get enhanced specification from LLM
+        enhanced_result = prompt_constructor.enhance_with_llm(constructed_prompt)
+        
+        logger.info(f"Successfully enhanced prompt for task_type: {task_type}")
+        
+        # Log successful response
+        logging_service.log_api_request(
+            endpoint='/api/enhance-prompt',
+            request_data={
+                'prompt': user_prompt,
+                'task_type': task_type,
+                'selected_files_count': len(selected_files)
+            },
+            response_data={
+                'success': True,
+                'enhanced_length': len(enhanced_result['enhanced_specification'])
+            }
+        )
+        
+        return jsonify({
+            'enhanced_specification': enhanced_result['enhanced_specification'],
+            'original_input': enhanced_result['original_input'],
+            'task_type': enhanced_result['task_type'],
+            'metadata': enhanced_result['metadata']
+        })
+        
+    except Exception as e:
+        error_msg = f"Error in enhance-prompt endpoint: {str(e)}"
+        logger.error(error_msg)
+        logging_service.log_error("enhance_prompt", error_msg, {'prompt': user_prompt[:100] if 'user_prompt' in locals() else 'unknown'})
+        return jsonify({'error': f'Failed to enhance prompt: {str(e)}'}), 500
+
+@app.route('/api/stream-response', methods=['POST'])
+def stream_response():
+    """Stream responses from AWS Bedrock"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'prompt' not in data:
+            return jsonify({'error': 'Prompt is required'}), 400
+        
+        user_prompt = data['prompt']
+        system_prompt = data.get('system_prompt', None)
+        max_tokens = data.get('max_tokens', 4000)
+        temperature = data.get('temperature', 0.3)
+        
+        logger.info(f"Processing streaming request: {user_prompt[:100]}...")
+        
+        # Log the streaming request
+        logging_service.log_api_request(
+            endpoint='/api/stream-response',
+            request_data={
+                'prompt': user_prompt,
+                'max_tokens': max_tokens,
+                'temperature': temperature
+            }
+        )
         
         # Initialize Bedrock service
         bedrock_service = BedrockService()
         
-        # Enhance the prompt using sonnet mode
-        enhanced_prompt = bedrock_service.enhance_prompt(user_prompt, task_type)
+        # Test connection first
+        if not bedrock_service.test_connection():
+            error_msg = "Bedrock connection test failed"
+            logger.error(error_msg)
+            logging_service.log_error("bedrock_connection", error_msg)
+            return jsonify({'error': 'AI service temporarily unavailable'}), 503
         
-        # Get user config for NFR requirements
-        config_service = ConfigService()
-        config = config_service.get_config()
+        # Collect chunks for logging
+        response_chunks = []
         
-        # Get NFR requirements based on task type
-        nfr_requirements = []
-        if 'non_functional_requirements' in config:
-            all_nfr = config['non_functional_requirements']
-            if task_type in all_nfr:
-                # Extract relevant requirements for this specific prompt
-                nfr_requirements = bedrock_service.extract_relevant_requirements(
-                    user_prompt, all_nfr[task_type], task_type
+        def generate():
+            try:
+                for chunk in bedrock_service.invoke_claude_streaming(
+                    prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature
+                ):
+                    # Collect chunk for logging
+                    response_chunks.append(chunk)
+                    
+                    # Send each chunk as Server-Sent Events
+                    yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                
+                # Log the complete streaming response
+                logging_service.log_streaming_response(
+                    prompt=user_prompt,
+                    response_chunks=response_chunks,
+                    metadata={
+                        'max_tokens': max_tokens,
+                        'temperature': temperature,
+                        'system_prompt': system_prompt is not None
+                    }
                 )
+                
+                # Send completion signal
+                yield f"data: {json.dumps({'done': True})}\n\n"
+                
+            except Exception as e:
+                error_msg = f"Error in streaming: {str(e)}"
+                logger.error(error_msg)
+                logging_service.log_error("streaming", error_msg, {'prompt': user_prompt[:100]})
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
         
-        # Add file context if provided
-        file_context = data.get('file_context', '')
-        
-        result = {
-            'success': True,
-            'original_prompt': user_prompt,
-            'enhanced_prompt': enhanced_prompt,
-            'task_type': task_type,
-            'nfr_requirements': nfr_requirements
-        }
-        
-        # Generate detailed specification if requested
-        if include_specification:
-            specification = bedrock_service.generate_detailed_specification(
-                enhanced_prompt, nfr_requirements, file_context
-            )
-            result['detailed_specification'] = specification
-        
-        return jsonify(result)
+        return Response(
+            generate(),
+            mimetype='text/plain',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            }
+        )
         
     except Exception as e:
-        logger.error(f"Error in enhance_prompt: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': f'Failed to enhance prompt: {str(e)}',
-            'fallback_prompt': data.get('prompt', '') if data else ''
-        }), 500
+        error_msg = f"Error in stream-response endpoint: {str(e)}"
+        logger.error(error_msg)
+        logging_service.log_error("stream_response", error_msg)
+        return jsonify({'error': f'Failed to stream response: {str(e)}'}), 500
 
 @app.route('/api/generate-specification', methods=['POST'])
 def generate_specification():
@@ -469,51 +398,6 @@ def generate_specification():
             'success': False,
             'error': f'Failed to generate specification: {str(e)}'
         }), 500
-
-# User configuration endpoints
-@app.route('/api/user/config', methods=['GET'])
-def get_user_config():
-    try:
-        config_path = os.path.join(os.path.dirname(__file__), 'config', 'user_config.json')
-        if os.path.exists(config_path):
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-        else:
-            config = {
-                'aws': {
-                    'access_key_id': '',
-                    'secret_access_key': '',
-                    'region': os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
-                },
-                'github': {
-                    'token': '',
-                    'default_repo': ''
-                },
-                'preferences': {
-                    'default_task_type': os.environ.get('DEFAULT_TASK_TYPE', 'development'),
-                    'include_context_by_default': True,
-                    'include_requirements_by_default': True
-                }
-            }
-        
-        return jsonify({'success': True, 'config': config})
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/user/config', methods=['POST'])
-def update_user_config():
-    try:
-        data = request.get_json()
-        config_path = os.path.join(os.path.dirname(__file__), 'config', 'user_config.json')
-        
-        with open(config_path, 'w') as f:
-            json.dump(data, f, indent=2)
-        
-        return jsonify({'success': True, 'message': 'Configuration updated successfully'})
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 # Repository analysis endpoint
 @app.route('/api/repository/analyze', methods=['GET'])
@@ -571,66 +455,32 @@ def analyze_repository():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/github/test', methods=['POST'])
-def test_github_connection():
+@app.route('/api/log-frontend-error', methods=['POST'])
+def log_frontend_error():
+    """Receive and log frontend errors"""
     try:
         data = request.get_json()
-        github_token = data.get('github_token') or data.get('token')
-        test_repo = data.get('test_repo')
         
-        # Get default repo from config if not provided
-        if not test_repo:
-            config = config_service.get_config()
-            test_repo = config.get('github', {}).get('default_repo')
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
         
-        if not test_repo:
-            return jsonify({
-                'connected': False,
-                'error': 'No repository specified for testing'
-            }), 400
-        
-        # Test GitHub connection
-        github_service.set_token(github_token)
-        
-        try:
-            # Try to get basic repository access first
-            owner, repo_name = github_service.parse_repo_url(test_repo)
-            repo = github_service.github.get_repo(f"{owner}/{repo_name}")
-            
-            # Basic info that should always be available
-            basic_info = {
-                'name': repo.name,
-                'full_name': repo.full_name,
-                'private': repo.private,
-                'default_branch': repo.default_branch
+        # Log the frontend error
+        logging_service.log_error(
+            error_type="frontend_error",
+            error_message=data.get('message', 'Unknown frontend error'),
+            context={
+                'frontend_data': data,
+                'timestamp': data.get('timestamp'),
+                'url': data.get('url'),
+                'user_agent': data.get('userAgent')
             }
-            
-            return jsonify({
-                'connected': True,
-                'message': f'Successfully connected to {basic_info["full_name"]}',
-                'repository': basic_info
-            })
-            
-        except Exception as github_error:
-            error_msg = str(github_error)
-            if '404' in error_msg:
-                error_msg = 'Repository not found or access denied'
-            elif '401' in error_msg or 'Bad credentials' in error_msg:
-                error_msg = 'Invalid GitHub token or insufficient permissions'
-            elif '403' in error_msg:
-                error_msg = 'Rate limit exceeded or access forbidden'
-            
-            return jsonify({
-                'connected': False,
-                'error': error_msg
-            }), 401
+        )
+        
+        return jsonify({'success': True, 'message': 'Error logged successfully'})
         
     except Exception as e:
-        logger.error(f"GitHub connection test failed: {str(e)}")
-        return jsonify({
-            'connected': False,
-            'error': str(e)
-        }), 500
+        logger.error(f"Error logging frontend error: {str(e)}")
+        return jsonify({'error': 'Failed to log error'}), 500
 
 @app.errorhandler(404)
 def not_found(error):

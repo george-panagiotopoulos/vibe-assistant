@@ -1,43 +1,35 @@
 import React, { useState, useEffect } from 'react';
-import { ApiService } from '../services/ApiService';
 
 const StatusBar = ({ loading, error, message, repositoryData, selectedFiles, config }) => {
   const [systemStatus, setSystemStatus] = useState({
-    api: 'checking',
+    api: 'unknown',
     bedrock: 'unknown'
   });
 
   useEffect(() => {
     checkSystemStatus();
-    const interval = setInterval(checkSystemStatus, 30000); // Check every 30 seconds
-    return () => clearInterval(interval);
   }, []);
 
   const checkSystemStatus = async () => {
     try {
-      const healthResponse = await ApiService.healthCheck();
-      setSystemStatus(prev => ({
-        ...prev,
-        api: healthResponse.status === 'healthy' ? 'healthy' : 'error'
-      }));
+      setSystemStatus(prev => ({ ...prev, api: 'checking' }));
+      const response = await fetch('/api/health');
+      if (response.ok) {
+        setSystemStatus(prev => ({
+          ...prev,
+          api: 'healthy'
+        }));
+      } else {
+        setSystemStatus(prev => ({
+          ...prev,
+          api: 'error'
+        }));
+      }
     } catch (error) {
       setSystemStatus(prev => ({
         ...prev,
         api: 'error'
       }));
-    }
-  };
-
-  const testBedrockConnection = async () => {
-    try {
-      setSystemStatus(prev => ({ ...prev, bedrock: 'checking' }));
-      const response = await ApiService.testBedrockConnection(config);
-      setSystemStatus(prev => ({
-        ...prev,
-        bedrock: response.connected ? 'healthy' : 'error'
-      }));
-    } catch (error) {
-      setSystemStatus(prev => ({ ...prev, bedrock: 'error' }));
     }
   };
 
@@ -113,7 +105,7 @@ const StatusBar = ({ loading, error, message, repositoryData, selectedFiles, con
         )}
       </div>
 
-      {/* Right side - System status and health check */}
+      {/* Right side - System status */}
       <div className="flex items-center space-x-4">
         {/* API Status */}
         <div className="flex items-center space-x-1">
@@ -121,21 +113,11 @@ const StatusBar = ({ loading, error, message, repositoryData, selectedFiles, con
           <span>API: {getStatusText(systemStatus.api)}</span>
         </div>
 
-        {/* Bedrock Status */}
+        {/* Configuration Status */}
         <div className="flex items-center space-x-1">
-          <span>{getStatusIcon(systemStatus.bedrock)}</span>
-          <span>Bedrock: {getStatusText(systemStatus.bedrock)}</span>
+          <span>{config?.aws?.access_key_id ? '🟢' : '��'}</span>
+          <span>Config: {config?.aws?.access_key_id ? 'Ready' : 'Missing'}</span>
         </div>
-
-        {/* Health check button */}
-        <button
-          onClick={testBedrockConnection}
-          disabled={!config.aws?.access_key_id}
-          className="px-2 py-1 text-xs bg-vibe-gray-dark hover:bg-vibe-gray text-vibe-gray rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Test Bedrock Connection"
-        >
-          🔄 Test
-        </button>
       </div>
     </div>
   );

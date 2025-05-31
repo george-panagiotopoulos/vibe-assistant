@@ -1,14 +1,4 @@
 {
-  "github": {
-    "token": "",
-    "default_repo": ""
-  },
-  "aws": {
-    "access_key_id": "",
-    "secret_access_key": "",
-    "region": "us-east-1",
-    "bedrock_model_id": "anthropic.claude-3-5-sonnet-20240620-v1:0"
-  },
   "non_functional_requirements": {
     "development": [
       "Use TypeScript for type safety and better developer experience",

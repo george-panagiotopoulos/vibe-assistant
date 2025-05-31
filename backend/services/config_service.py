@@ -2,10 +2,7 @@ import json
 import os
 import logging
 from typing import Dict, Any, List
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
+from config.env_loader import env_loader
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +11,8 @@ class ConfigService:
     
     def __init__(self, config_file='config/user_config.json'):
         self.config_file = config_file
+        # Force environment loading
+        env_loader.ensure_loaded()
         self.ensure_config_file_exists()
     
     def ensure_config_file_exists(self):
@@ -34,16 +33,6 @@ class ConfigService:
     def _create_default_config(self):
         """Create a default configuration file"""
         default_config = {
-            "github": {
-                "token": "",
-                "default_repo": ""
-            },
-            "aws": {
-                "access_key_id": "",
-                "secret_access_key": "",
-                "region": "us-east-1",
-                "bedrock_model_id": "anthropic.claude-3-5-sonnet-20240620-v1:0"
-            },
             "non_functional_requirements": {
                 "development": [
                     "Use TypeScript for type safety and better developer experience",
@@ -109,18 +98,29 @@ class ConfigService:
     def get_config(self) -> Dict[str, Any]:
         """Get the current configuration, merging user config with environment variables"""
         try:
+            # FORCE environment reload
+            env_loader.ensure_loaded()
+            
             # Load user configuration
             with open(self.config_file, 'r') as f:
                 config = json.load(f)
             
-            # Override with environment variables for credentials
-            config['aws']['access_key_id'] = os.getenv('AWS_ACCESS_KEY_ID', config['aws'].get('access_key_id', ''))
-            config['aws']['secret_access_key'] = os.getenv('AWS_SECRET_ACCESS_KEY', config['aws'].get('secret_access_key', ''))
-            config['aws']['region'] = os.getenv('AWS_DEFAULT_REGION', config['aws'].get('region', 'us-east-1'))
-            config['aws']['bedrock_model_id'] = os.getenv('AWS_BEDROCK_MODEL_ID', config['aws'].get('bedrock_model_id', 'anthropic.claude-3-5-sonnet-20240620-v1:0'))
+            # ADD AWS and GitHub sections from environment variables ONLY
+            config['aws'] = {
+                'access_key_id': env_loader.get_env('AWS_ACCESS_KEY_ID', ''),
+                'secret_access_key': env_loader.get_env('AWS_SECRET_ACCESS_KEY', ''),
+                'region': env_loader.get_env('AWS_DEFAULT_REGION', 'us-east-1'),
+                'bedrock_model_id': env_loader.get_env('AWS_BEDROCK_MODEL_ID', 'anthropic.claude-3-5-sonnet-20240620-v1:0')
+            }
             
-            config['github']['token'] = os.getenv('GITHUB_TOKEN', config['github'].get('token', ''))
-            config['github']['default_repo'] = os.getenv('GITHUB_DEFAULT_REPO', config['github'].get('default_repo', ''))
+            config['github'] = {
+                'token': env_loader.get_env('GITHUB_TOKEN', ''),
+                'default_repo': env_loader.get_env('GITHUB_DEFAULT_REPO', '')
+            }
+            
+            # LOG what we're returning
+            logger.debug(f"Config loaded - GitHub repo: {config['github']['default_repo']}")
+            logger.debug(f"Config loaded - AWS key set: {bool(config['aws']['access_key_id'])}")
             
             return config
         except FileNotFoundError:

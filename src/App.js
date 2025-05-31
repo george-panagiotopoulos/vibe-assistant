@@ -6,7 +6,8 @@ import PromptBuilder from './components/PromptBuilder';
 import ConfigPanel from './components/ConfigPanel';
 import RequirementsEditor from './components/RequirementsEditor';
 import StatusBar from './components/StatusBar';
-import AIAssistant from './components/AIAssistant';
+import LogViewer from './components/LogViewer';
+import StreamingTest from './components/StreamingTest';
 
 const App = () => {
   const [currentView, setCurrentView] = useState('builder');
@@ -16,7 +17,7 @@ const App = () => {
   const [repositoryData, setRepositoryData] = useState(null);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [statusMessage, setStatusMessage] = useState('');
-  const [currentPrompt, setCurrentPrompt] = useState('');
+  const [logs, setLogs] = useState([]);
 
   useEffect(() => {
     loadConfig();
@@ -101,12 +102,50 @@ const App = () => {
     });
   };
 
-  const handlePromptUpdate = (newPrompt) => {
-    setCurrentPrompt(newPrompt);
-  };
-
   const handleViewChange = (viewId) => {
     setCurrentView(viewId);
+  };
+
+  const addLog = (log) => {
+    setLogs(prev => [...prev, { ...log, id: Date.now() }]);
+  };
+
+  const addLogs = (newLogs) => {
+    const logsWithIds = newLogs.map(log => ({ ...log, id: Date.now() + Math.random() }));
+    setLogs(prev => [...prev, ...logsWithIds]);
+  };
+
+  const clearLogs = () => {
+    setLogs([]);
+  };
+
+  const handlePromptEnhancement = async (prompt, taskType, selectedFiles) => {
+    try {
+      // Add user input log
+      addLog({
+        type: 'user_input',
+        content: prompt,
+        timestamp: new Date().toISOString(),
+        metadata: { task_type: taskType, file_count: selectedFiles.length }
+      });
+
+      const response = await ApiService.enhancePrompt(prompt, taskType, selectedFiles);
+      
+      // Add logs from backend response
+      if (response.logs) {
+        addLogs(response.logs);
+      }
+
+      return response;
+    } catch (error) {
+      // Add frontend error log
+      addLog({
+        type: 'frontend_error',
+        content: `Frontend error: ${error.message}`,
+        timestamp: new Date().toISOString()
+      });
+      throw error;
+    }
   };
 
   const renderMainContent = () => {
@@ -148,7 +187,7 @@ const App = () => {
           return (
             <PromptBuilder
               selectedFiles={selectedFiles}
-              onPromptChange={handlePromptUpdate}
+              onPromptEnhancement={handlePromptEnhancement}
               config={config}
             />
           );
@@ -156,11 +195,13 @@ const App = () => {
           return <RequirementsEditor config={config} />;
         case 'config':
           return <ConfigPanel config={config} onConfigUpdate={handleConfigUpdate} />;
+        case 'streaming':
+          return <StreamingTest />;
         default:
           return (
             <PromptBuilder
               selectedFiles={selectedFiles}
-              onPromptChange={handlePromptUpdate}
+              onPromptEnhancement={handlePromptEnhancement}
               config={config}
             />
           );
@@ -174,13 +215,11 @@ const App = () => {
           {workAreaContent()}
         </div>
         
-        {/* AI Assistant (Right Side) */}
+        {/* Log Viewer (Right Side) */}
         <div className="bg-vibe-dark">
-          <AIAssistant
-            currentPrompt={currentPrompt}
-            onPromptUpdate={handlePromptUpdate}
-            selectedFiles={selectedFiles}
-            config={config}
+          <LogViewer
+            logs={logs}
+            onClearLogs={clearLogs}
           />
         </div>
       </div>
