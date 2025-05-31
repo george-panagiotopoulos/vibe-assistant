@@ -1,0 +1,61 @@
+{
+  "github": {
+    "token": "your_github_token_here",
+    "default_repo": "https://github.com/your-username/your-repo"
+  },
+  "aws": {
+    "access_key_id": "your_aws_access_key_here",
+    "secret_access_key": "your_aws_secret_key_here",
+    "region": "us-east-1",
+    "bedrock_model_id": "anthropic.claude-3-5-sonnet-20240620-v1:0"
+  },
+  "non_functional_requirements": {
+    "development": [
+      "Use TypeScript for type safety and better developer experience",
+      "Implement proper error handling with try-catch blocks and user feedback",
+      "Follow REST API conventions for endpoints and HTTP status codes",
+      "Include unit tests with at least 80% code coverage",
+      "Use responsive design principles for mobile compatibility",
+      "Implement proper input validation and sanitization",
+      "Follow security best practices (authentication, authorization, data protection)",
+      "Use meaningful variable and function names with clear documentation",
+      "Implement logging for debugging and monitoring purposes",
+      "Consider performance implications and optimize for speed"
+    ],
+    "refactoring": [
+      "Maintain existing functionality while improving code structure",
+      "Eliminate code duplication through proper abstraction",
+      "Improve variable and function naming for better readability",
+      "Extract complex logic into separate, testable functions",
+      "Optimize performance bottlenecks identified through profiling",
+      "Update and maintain comprehensive test coverage",
+      "Improve error handling and edge case management",
+      "Enhance documentation and inline comments",
+      "Follow consistent coding style and conventions",
+      "Consider backward compatibility when making changes"
+    ],
+    "testing": [
+      "Write comprehensive unit tests covering all functions and methods",
+      "Include integration tests for API endpoints and database interactions",
+      "Test edge cases, boundary conditions, and error scenarios",
+      "Use meaningful test descriptions that explain what is being tested",
+      "Implement mocking for external dependencies and services",
+      "Ensure tests are independent and can run in any order",
+      "Include performance tests for critical application paths",
+      "Test user interface components and user interactions",
+      "Validate data integrity and consistency in tests",
+      "Use code coverage tools to identify untested code paths"
+    ]
+  },
+  "system_prompt": {
+    "development": "You are an expert software developer with deep knowledge of modern web technologies, best practices, and design patterns. Focus on creating clean, maintainable, and scalable solutions.",
+    "refactoring": "You are an expert code reviewer and software architect specializing in improving existing codebases. Focus on enhancing structure, performance, and maintainability while preserving functionality.",
+    "testing": "You are an expert QA engineer and test automation specialist. Focus on comprehensive testing strategies, edge cases, and ensuring software quality and reliability."
+  },
+  "preferences": {
+    "default_task_type": "development",
+    "auto_enhance_prompts": true,
+    "include_file_context": true,
+    "max_file_size_kb": 1000
+  }
+}
