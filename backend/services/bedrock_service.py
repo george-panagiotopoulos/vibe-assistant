@@ -21,38 +21,22 @@ class BedrockService:
         self._initialize_client()
     
     def _load_user_config(self):
-        """Load AWS credentials from user config file"""
-        try:
-            config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'user_config.json')
-            if os.path.exists(config_path):
-                with open(config_path, 'r') as f:
-                    config = json.load(f)
-                    aws_config = config.get('aws', {})
-                    return {
-                        'access_key_id': aws_config.get('access_key_id'),
-                        'secret_access_key': aws_config.get('secret_access_key'),
-                        'region': aws_config.get('region', 'us-east-1'),
-                        'model_id': aws_config.get('bedrock_model_id', self.model_id)
-                    }
-        except Exception as e:
-            logger.warning(f"Could not load user config: {str(e)}")
-        
-        # Fallback to environment variables
+        """Load AWS credentials from environment variables"""
         return {
             'access_key_id': os.getenv("AWS_ACCESS_KEY_ID"),
             'secret_access_key': os.getenv("AWS_SECRET_ACCESS_KEY"),
-            'region': os.getenv("AWS_REGION", 'us-east-1'),
-            'model_id': self.model_id
+            'region': os.getenv("AWS_DEFAULT_REGION", 'us-east-1'),
+            'model_id': os.getenv("AWS_BEDROCK_MODEL_ID", self.model_id)
         }
     
     def _initialize_client(self):
         """Initialize AWS Bedrock client following the working example pattern"""
         try:
-            # Load credentials from user config first, then environment variables
+            # Load credentials from environment variables
             creds = self._load_user_config()
             
             if not creds['access_key_id'] or not creds['secret_access_key']:
-                raise Exception("AWS credentials not found in user config or environment variables")
+                raise Exception("AWS credentials not found in environment variables")
             
             self.client = boto3.client(
                 service_name='bedrock-runtime',  # Following the working example
@@ -61,7 +45,7 @@ class BedrockService:
                 aws_secret_access_key=creds['secret_access_key'],
             )
             
-            # Update model ID from config
+            # Update model ID from environment variables
             if creds['model_id']:
                 self.model_id = creds['model_id']
             
@@ -212,46 +196,130 @@ class BedrockService:
             raise Exception(error_msg)
 
     def enhance_prompt(self, user_prompt, task_type='development'):
-        """Enhance a user prompt using Claude"""
-        system_prompt = """You are an expert at creating effective prompts for AI coding assistants. 
-Your job is to take a user's basic prompt and enhance it to be more specific, actionable, and likely to produce better results.
+        """Enhanced prompt optimization specifically for vibe coding tool"""
+        system_prompt = """You are an expert prompt engineer specializing in AI coding assistants, particularly for the "vibe coding tool" - an intelligent development assistant that helps developers with coding tasks, architecture decisions, and development workflows.
 
-Guidelines for enhancement:
-1. Make the prompt more specific and detailed
-2. Add context about best practices for the task type
-3. Include relevant technical considerations
-4. Structure the prompt clearly with sections if needed
-5. Preserve the user's original intent and requirements
-6. Add clarifying questions or considerations the AI should address
+Your job is to transform basic user prompts into highly effective, detailed specifications that will produce optimal results from AI coding assistants.
 
-Task types and their considerations:
-- development: Focus on code quality, architecture, testing, documentation
-- refactoring: Emphasize maintainability, performance, code organization
-- testing: Include test coverage, edge cases, different testing strategies
-- debugging: Add systematic debugging approaches, logging, error handling
+VIBE CODING TOOL CONTEXT:
+- This is a sophisticated development assistant that can analyze code, suggest improvements, generate implementations, and provide architectural guidance
+- It works best with detailed, structured prompts that include context, requirements, and specific outcomes
+- It excels at understanding developer intent and providing practical, implementable solutions
+
+ENHANCEMENT GUIDELINES:
+1. **Specificity**: Transform vague requests into precise, actionable specifications
+2. **Context**: Add relevant technical context and constraints
+3. **Structure**: Organize the prompt with clear sections and requirements
+4. **Best Practices**: Include coding standards, patterns, and architectural considerations
+5. **Deliverables**: Specify exactly what outputs are expected
+6. **Non-Functional Requirements**: Consider performance, security, maintainability, scalability
+
+TASK TYPE SPECIALIZATIONS:
+- **development**: Focus on architecture, design patterns, code quality, testing strategy, documentation
+- **refactoring**: Emphasize code organization, performance optimization, maintainability, migration strategies
+- **testing**: Include test coverage, edge cases, testing frameworks, CI/CD integration
+- **debugging**: Add systematic debugging approaches, logging strategies, error handling patterns
+
+OUTPUT FORMAT:
+Return a comprehensive, well-structured prompt that includes:
+- Clear objective and scope
+- Technical requirements and constraints  
+- Expected deliverables and format
+- Quality criteria and success metrics
+- Relevant context and background information
 
 Return only the enhanced prompt, nothing else."""
 
-        enhancement_prompt = f"""Task Type: {task_type}
+        enhancement_prompt = f"""TASK TYPE: {task_type}
 
-Original User Prompt:
+ORIGINAL USER PROMPT:
 {user_prompt}
 
-Please enhance this prompt to be more effective for an AI coding assistant."""
+ENHANCEMENT REQUEST:
+Transform this into a comprehensive specification for the vibe coding tool that will produce optimal results. Make it detailed, specific, and actionable while preserving the user's original intent."""
 
         try:
             enhanced = self.invoke_claude(
                 prompt=enhancement_prompt,
                 system_prompt=system_prompt,
-                max_tokens=2000,
-                temperature=0.3
+                max_tokens=3000,
+                temperature=0.3,
+                model_id='anthropic.claude-3-5-sonnet-20240620-v1:0'  # Use working model
             )
             return enhanced.strip()
         except Exception as e:
             logger.error(f"Error enhancing prompt: {str(e)}")
             # Return original prompt if enhancement fails
             return user_prompt
-    
+
+    def generate_detailed_specification(self, enhanced_prompt, nfr_requirements=None, file_context=None):
+        """Generate a detailed technical specification based on the enhanced prompt"""
+        system_prompt = """You are a senior technical architect creating detailed specifications for development projects. 
+
+Generate a comprehensive technical specification that includes:
+
+1. **PROJECT OVERVIEW**
+   - Objective and scope
+   - Key deliverables
+   - Success criteria
+
+2. **TECHNICAL REQUIREMENTS**
+   - Functional requirements
+   - Technical constraints
+   - Integration requirements
+
+3. **ARCHITECTURE & DESIGN**
+   - System architecture overview
+   - Design patterns to use
+   - Component structure
+   - Data flow and interactions
+
+4. **IMPLEMENTATION DETAILS**
+   - Technology stack recommendations
+   - File structure and organization
+   - Key classes/modules/functions
+   - API design (if applicable)
+
+5. **QUALITY ASSURANCE**
+   - Testing strategy
+   - Code quality standards
+   - Performance requirements
+   - Security considerations
+
+6. **DEVELOPMENT WORKFLOW**
+   - Implementation phases
+   - Dependencies and prerequisites
+   - Risk mitigation strategies
+
+Format the output as a structured document with clear sections and actionable details."""
+
+        context_info = ""
+        if nfr_requirements:
+            context_info += f"\nNON-FUNCTIONAL REQUIREMENTS:\n{chr(10).join(['- ' + req for req in nfr_requirements])}\n"
+        
+        if file_context:
+            context_info += f"\nFILE CONTEXT:\n{file_context}\n"
+
+        specification_prompt = f"""ENHANCED PROMPT:
+{enhanced_prompt}
+
+{context_info}
+
+Generate a detailed technical specification based on this enhanced prompt and context."""
+
+        try:
+            specification = self.invoke_claude(
+                prompt=specification_prompt,
+                system_prompt=system_prompt,
+                max_tokens=4000,
+                temperature=0.2,
+                model_id='anthropic.claude-3-5-sonnet-20240620-v1:0'  # Use working model
+            )
+            return specification.strip()
+        except Exception as e:
+            logger.error(f"Error generating specification: {str(e)}")
+            return f"Error generating specification: {str(e)}"
+
     def analyze_task_type(self, prompt):
         """Analyze a prompt to determine the most appropriate task type"""
         system_prompt = """Analyze the given coding prompt and categorize it into one of these task types:

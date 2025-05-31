@@ -7,7 +7,7 @@
     "access_key_id": "",
     "secret_access_key": "",
     "region": "us-east-1",
-    "bedrock_model_id": "anthropic.claude-3-5-sonnet-20240620-v1:0"
+    "bedrock_model_id": "anthropic.claude-sonnet-4-20250514-v1:0"
   },
   "non_functional_requirements": {
     "development": [
@@ -56,6 +56,10 @@
     "default_task_type": "development",
     "auto_enhance_prompts": true,
     "include_file_context": true,
-    "max_file_size_kb": 1000
+    "max_file_size_kb": 1000,
+    "auto_enhance": false,
+    "include_file_content": true,
+    "max_file_size": 100,
+    "editor_theme": "light"
   }
 }

@@ -19,11 +19,6 @@ pip-delete-this-directory.txt
 .env.production.local
 backend/.env
 
-# User configuration files (contains AWS/GitHub credentials)
-user_config.json
-backend/config/user_config.json
-config/user_config.json
-
 # Build outputs
 build/
 dist/
@@ -81,3 +76,4 @@ test_*.py
 # - start.sh (startup script)
 # - README.md (documentation)
 # - All source code files
+# - backend/config/user_config.json (configuration template)

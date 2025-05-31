@@ -368,99 +368,107 @@ def build_prompt():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/prompt/enhance', methods=['POST'])
+@app.route('/api/enhance-prompt', methods=['POST'])
 def enhance_prompt():
+    """Enhanced prompt optimization endpoint for vibe coding tool"""
     try:
         data = request.get_json()
-        prompt = data.get('prompt', '')
+        
+        if not data or 'prompt' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Prompt is required'
+            }), 400
+        
+        user_prompt = data['prompt']
         task_type = data.get('task_type', 'development')
-        selected_files = data.get('selected_files', [])
+        include_specification = data.get('include_specification', False)
         
-        # Get user configuration for non-functional requirements
+        # Initialize Bedrock service
+        bedrock_service = BedrockService()
+        
+        # Enhance the prompt using sonnet mode
+        enhanced_prompt = bedrock_service.enhance_prompt(user_prompt, task_type)
+        
+        # Get user config for NFR requirements
+        config_service = ConfigService()
         config = config_service.get_config()
-        requirements = config.get('non_functional_requirements', {}).get(task_type, [])
         
-        # Initialize Bedrock service (it will load credentials from user config automatically)
-        try:
-            bedrock_service_instance = BedrockService()
-            
-            # Use AI to enhance the prompt with Claude
-            enhanced_prompt = bedrock_service_instance.enhance_prompt(prompt, task_type)
-            
-            # Use AI to filter and add only relevant non-functional requirements
-            relevant_requirements = []
-            if requirements:
-                relevant_requirements = bedrock_service_instance.extract_relevant_requirements(
-                    prompt, requirements, task_type
+        # Get NFR requirements based on task type
+        nfr_requirements = []
+        if 'non_functional_requirements' in config:
+            all_nfr = config['non_functional_requirements']
+            if task_type in all_nfr:
+                # Extract relevant requirements for this specific prompt
+                nfr_requirements = bedrock_service.extract_relevant_requirements(
+                    user_prompt, all_nfr[task_type], task_type
                 )
-                
-                if relevant_requirements:
-                    enhanced_prompt += f"\n\nNon-functional requirements for {task_type}:\n"
-                    enhanced_prompt += "\n".join(f"- {req}" for req in relevant_requirements)
-            
-            # Add file context if files are selected
-            if selected_files:
-                enhanced_prompt += f"\n\nContext: This request relates to {len(selected_files)} selected file(s). Please consider the file structure and content when providing your response."
-            
-            return jsonify({
-                'success': True,
-                'enhanced_prompt': enhanced_prompt,
-                'original_prompt': prompt,
-                'task_type': task_type,
-                'requirements_applied': len(relevant_requirements),
-                'ai_enhanced': True
-            })
-            
-        except Exception as bedrock_error:
-            logger.warning(f"Bedrock enhancement failed, using fallback: {str(bedrock_error)}")
-            
-            # Fallback to basic enhancement if Bedrock fails
-            enhanced_prompt = prompt
-            
-            # Add basic task-specific guidance
-            task_guidance = {
-                'development': [
-                    "Consider error handling and edge cases",
-                    "Follow coding best practices and design patterns",
-                    "Include appropriate comments and documentation",
-                    "Consider performance and scalability"
-                ],
-                'refactoring': [
-                    "Identify code smells and anti-patterns",
-                    "Improve code organization and modularity", 
-                    "Enhance readability and maintainability",
-                    "Optimize performance where possible"
-                ],
-                'testing': [
-                    "Create comprehensive test cases including edge cases",
-                    "Follow testing best practices (AAA pattern, etc.)",
-                    "Include both unit and integration tests",
-                    "Consider test coverage and quality metrics"
-                ]
-            }
-            
-            if task_type in task_guidance:
-                enhanced_prompt += "\n\nAdditional considerations:\n"
-                enhanced_prompt += "\n".join(f"- {guidance}" for guidance in task_guidance[task_type])
-            
-            # Add non-functional requirements from config (limit to most relevant)
-            if requirements:
-                enhanced_prompt += f"\n\nNon-functional requirements for {task_type}:\n"
-                enhanced_prompt += "\n".join(f"- {req}" for req in requirements[:5])  # Limit to first 5
-            
-            return jsonify({
-                'success': True,
-                'enhanced_prompt': enhanced_prompt,
-                'original_prompt': prompt,
-                'task_type': task_type,
-                'requirements_applied': min(len(requirements), 5) if requirements else 0,
-                'ai_enhanced': False,
-                'fallback_used': True
-            })
+        
+        # Add file context if provided
+        file_context = data.get('file_context', '')
+        
+        result = {
+            'success': True,
+            'original_prompt': user_prompt,
+            'enhanced_prompt': enhanced_prompt,
+            'task_type': task_type,
+            'nfr_requirements': nfr_requirements
+        }
+        
+        # Generate detailed specification if requested
+        if include_specification:
+            specification = bedrock_service.generate_detailed_specification(
+                enhanced_prompt, nfr_requirements, file_context
+            )
+            result['detailed_specification'] = specification
+        
+        return jsonify(result)
         
     except Exception as e:
-        logger.error(f"Error enhancing prompt: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        logger.error(f"Error in enhance_prompt: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to enhance prompt: {str(e)}',
+            'fallback_prompt': data.get('prompt', '') if data else ''
+        }), 500
+
+@app.route('/api/generate-specification', methods=['POST'])
+def generate_specification():
+    """Generate detailed technical specification from enhanced prompt"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'enhanced_prompt' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Enhanced prompt is required'
+            }), 400
+        
+        enhanced_prompt = data['enhanced_prompt']
+        nfr_requirements = data.get('nfr_requirements', [])
+        file_context = data.get('file_context', '')
+        
+        # Initialize Bedrock service
+        bedrock_service = BedrockService()
+        
+        # Generate detailed specification
+        specification = bedrock_service.generate_detailed_specification(
+            enhanced_prompt, nfr_requirements, file_context
+        )
+        
+        return jsonify({
+            'success': True,
+            'specification': specification,
+            'enhanced_prompt': enhanced_prompt,
+            'nfr_requirements': nfr_requirements
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in generate_specification: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to generate specification: {str(e)}'
+        }), 500
 
 # User configuration endpoints
 @app.route('/api/user/config', methods=['GET'])

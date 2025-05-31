@@ -2,6 +2,10 @@ import json
 import os
 import logging
 from typing import Dict, Any, List
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +42,7 @@ class ConfigService:
                 "access_key_id": "",
                 "secret_access_key": "",
                 "region": "us-east-1",
-                "bedrock_model_id": "anthropic.claude-sonnet-4-20250514-v1:0"
+                "bedrock_model_id": "anthropic.claude-3-5-sonnet-20240620-v1:0"
             },
             "non_functional_requirements": {
                 "development": [
@@ -103,10 +107,21 @@ class ConfigService:
             logger.error(f"Error creating default config: {str(e)}")
     
     def get_config(self) -> Dict[str, Any]:
-        """Get the current configuration"""
+        """Get the current configuration, merging user config with environment variables"""
         try:
+            # Load user configuration
             with open(self.config_file, 'r') as f:
                 config = json.load(f)
+            
+            # Override with environment variables for credentials
+            config['aws']['access_key_id'] = os.getenv('AWS_ACCESS_KEY_ID', config['aws'].get('access_key_id', ''))
+            config['aws']['secret_access_key'] = os.getenv('AWS_SECRET_ACCESS_KEY', config['aws'].get('secret_access_key', ''))
+            config['aws']['region'] = os.getenv('AWS_DEFAULT_REGION', config['aws'].get('region', 'us-east-1'))
+            config['aws']['bedrock_model_id'] = os.getenv('AWS_BEDROCK_MODEL_ID', config['aws'].get('bedrock_model_id', 'anthropic.claude-3-5-sonnet-20240620-v1:0'))
+            
+            config['github']['token'] = os.getenv('GITHUB_TOKEN', config['github'].get('token', ''))
+            config['github']['default_repo'] = os.getenv('GITHUB_DEFAULT_REPO', config['github'].get('default_repo', ''))
+            
             return config
         except FileNotFoundError:
             logger.warning("Config file not found, creating default")
@@ -120,40 +135,23 @@ class ConfigService:
             raise Exception(f"Failed to read configuration: {str(e)}")
     
     def update_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
-        """Update configuration with new values, preserving existing credentials"""
+        """Update configuration with new values"""
         try:
-            config = self.get_config()
-            
-            # Preserve existing credentials if they exist and new ones are empty
-            if 'aws' in updates and 'aws' in config:
-                aws_updates = updates['aws']
-                existing_aws = config['aws']
-                
-                # Preserve existing credentials if new ones are empty
-                if not aws_updates.get('access_key_id') and existing_aws.get('access_key_id'):
-                    aws_updates['access_key_id'] = existing_aws['access_key_id']
-                if not aws_updates.get('secret_access_key') and existing_aws.get('secret_access_key'):
-                    aws_updates['secret_access_key'] = existing_aws['secret_access_key']
-            
-            if 'github' in updates and 'github' in config:
-                github_updates = updates['github']
-                existing_github = config['github']
-                
-                # Preserve existing token if new one is empty
-                if not github_updates.get('token') and existing_github.get('token'):
-                    github_updates['token'] = existing_github['token']
-                if not github_updates.get('default_repo') and existing_github.get('default_repo'):
-                    github_updates['default_repo'] = existing_github['default_repo']
+            # Load current config from file (without env overrides)
+            with open(self.config_file, 'r') as f:
+                config = json.load(f)
             
             # Deep merge the updates
             config = self._deep_merge(config, updates)
             
-            # Save updated config
+            # Save updated config to file
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=2)
             
             logger.info("Configuration updated successfully")
-            return config
+            
+            # Return the merged config with environment variables
+            return self.get_config()
             
         except Exception as e:
             logger.error(f"Error updating config: {str(e)}")
